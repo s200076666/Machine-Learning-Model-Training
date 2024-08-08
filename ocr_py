@@ -1,0 +1,216 @@
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk
+import pytesseract
+import cv2
+import fitz  # PyMuPDF
+import re
+from fpdf import FPDF
+import os
+
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title('Fatimah OCR Application')
+        self.root.configure(bg='pink')  # Set the background color of the window
+        self.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'  # Path to Tesseract executable
+        pytesseract.pytesseract.tesseract_cmd = self.tesseract_cmd
+        self.data = {}
+        self.show_welcome_page()
+
+    def show_welcome_page(self):
+        self.clear_window()
+        tk.Label(self.root, text='Welcome to Fatimah OCR Application', font=('Helvetica', 16), bg='pink', fg='white').pack(pady=20)
+        tk.Button(self.root, text='Upload to Document', command=self.show_upload_page, bg='#ffb6c1', fg='white').pack(pady=10)  # Slightly pink button
+
+    def show_upload_page(self):
+        self.clear_window()
+        tk.Label(self.root, text='Drag and drop files here or upload from', font=('Helvetica', 14), bg='pink', fg='white').pack(pady=20)
+
+        # Define the upload options with icons
+        options = {
+            'My Device': r'C:\Users\Fatim\OneDrive\Documenten\ocrpyto\device_icon.png',
+            'Library': r'C:\Users\Fatim\OneDrive\Documenten\ocrpyto\library_icon.png',
+            'Link': r'C:\Users\Fatim\OneDrive\Documenten\ocrpyto\link_icon.png',
+            'Camera': r'C:\Users\Fatim\OneDrive\Documenten\ocrpyto\camera_icon.png'
+        }
+
+        for text, icon_path in options.items():
+            try:
+                # Load and resize the image
+                img = Image.open(icon_path)
+                img = img.resize((50, 50))  # Resize icon to fit
+                photo = ImageTk.PhotoImage(img)
+
+                # Create a frame for each option
+                frame = tk.Frame(self.root, bg='pink', width=100, height=150)
+                frame.pack_propagate(False)  # Prevent frame from resizing to fit its content
+                frame.pack(pady=10, padx=10, side='left', anchor='n')  # Anchor to keep frame at the top
+
+                # Create a label for the icon
+                icon_label = tk.Label(frame, image=photo, bg='pink')
+                icon_label.image = photo  # Keep a reference to prevent garbage collection
+                icon_label.pack(pady=(10, 5))  # Padding between icon and text
+
+                # Create a label for the text
+                text_label = tk.Label(frame, text=text, bg='pink', fg='white', font=('Helvetica', 12))
+                text_label.pack()
+
+                # Bind the click event to the frame
+                frame.bind('<Button-1>', lambda e, t=text: self.create_command(t)())
+                frame.bind('<Enter>', lambda e: frame.config(cursor='hand2'))  # Change cursor to hand on hover
+                frame.bind('<Leave>', lambda e: frame.config(cursor=''))  # Change cursor back to default
+
+            except Exception as e:
+                print(f"Error loading image {icon_path}: {e}")
+
+    def create_command(self, text):
+        def command():
+            if text == 'My Device':
+                self.upload_from_device()
+            elif text == 'Library':
+                self.upload_from_library()
+            elif text == 'Link':
+                self.upload_from_link()
+            elif text == 'Camera':
+                self.upload_from_camera()
+        return command
+
+    def upload_from_device(self):
+        file_path = filedialog.askopenfilename(filetypes=[('All Files', '*.*'), ('PDF Files', '*.pdf'), ('Image Files', '*.jpg;*.png')])
+        if file_path:
+            text = self.process_file(file_path)
+            print("Extracted Text:\n", text)  # Debugging: Print the full text extracted
+            
+            # Extract and display specific data
+            self.data = self.extract_specific_data(text)
+            self.display_extracted_data()
+        else:
+            messagebox.showwarning('No File Selected', 'No file was selected.')
+
+    def process_file(self, file_path):
+        # Load the image or PDF
+        if file_path.lower().endswith('.pdf'):
+            # Directly extract text from PDF using PyMuPDF
+            text = ""
+            with fitz.open(file_path) as doc:
+                for page in doc:
+                    text += page.get_text()
+            return text
+        else:
+            # For image files
+            image = cv2.imread(file_path)
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            text = pytesseract.image_to_string(gray, lang='eng')
+            return text
+
+    def extract_specific_data(self, text):
+        data = {}
+        
+        # Define keywords and patterns to search for
+        keywords = {
+            'order_date': ['Order Date', 'Date', 'Order Date:', 'Date:', 'order date', 'date'],
+            'order_number': ['Order Number', 'Order No', 'Order Number:', 'No:', 'order number', 'no'],
+            'sold_by': ['Sold By', 'Sold By:', 'Vendor', 'Supplier', 'sold by'],
+            'name': ['Name', 'Customer Name', 'Client Name', 'Name:', 'name']
+        }
+        
+        # Extract data based on keywords
+        for key, keywords_list in keywords.items():
+            for keyword in keywords_list:
+                # Regex to match the keyword and capture the value after it
+                match = re.search(rf'{re.escape(keyword)}\s*[:\-]?\s*(.+)', text, re.IGNORECASE)
+                if match:
+                    data[key] = match.group(1).strip()
+                    break
+            else:
+                data[key] = 'Not Found'
+        
+        return data
+
+    def display_extracted_data(self):
+        self.clear_window()
+
+        # Display the extracted data in labels
+        tk.Label(self.root, text='Extracted Data', font=('Helvetica', 16), bg='pink', fg='white').pack(pady=20)
+
+        for key, value in self.data.items():
+            frame = tk.Frame(self.root, bg='pink')
+            frame.pack(pady=5, padx=10, fill='x')
+
+            label = tk.Label(frame, text=f"{key.replace('_', ' ').title()}: {value}", bg='pink', fg='white', font=('Helvetica', 12))
+            label.pack(side='left')
+
+        # Display the "Push Data to Form" button
+        tk.Button(self.root, text='Push Data to Form', command=self.show_data_form, bg='#ffb6c1', fg='white').pack(pady=10)  # Slightly pink button
+
+    def show_data_form(self):
+        self.clear_window()
+
+        # Display the extracted data in a form
+        tk.Label(self.root, text='Extracted Data Form', font=('Helvetica', 16), bg='pink', fg='white').pack(pady=20)
+
+        self.entries = {}
+        for key, value in self.data.items():
+            frame = tk.Frame(self.root, bg='pink')
+            frame.pack(pady=5, padx=10, fill='x')
+
+            label = tk.Label(frame, text=f"{key.replace('_', ' ').title()}:", bg='pink', fg='white', font=('Helvetica', 12))
+            label.pack(side='left')
+
+            entry = tk.Entry(frame, font=('Helvetica', 12))
+            entry.insert(0, value)
+            entry.pack(side='left', padx=5)
+            self.entries[key] = entry
+
+        # Display buttons for saving and creating a PDF
+        tk.Button(self.root, text='Save', command=self.save_form, bg='#ffb6c1', fg='white').pack(pady=10)  # Slightly pink button
+        tk.Button(self.root, text='Create PDF', command=self.create_pdf, bg='#ffb6c1', fg='white').pack(pady=10)  # Slightly pink button
+
+    def save_form(self):
+        directory = r'C:\Users\Fatim\OneDrive\Documenten\ocrpyto'
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        
+        file_path = os.path.join(directory, 'form_data.txt')
+        with open(file_path, 'w') as file:
+            for key, entry in self.entries.items():
+                file.write(f"{key.replace('_', ' ').title()}: {entry.get()}\n")
+
+        messagebox.showinfo('Form Saved', f'Form data has been saved successfully at {file_path}.')
+
+    def create_pdf(self):
+        directory = r'C:\Users\Fatim\OneDrive\Documenten\ocrpyto'
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+        
+        file_path = os.path.join(directory, 'extracted_data.pdf')
+
+        pdf = FPDF()
+        pdf.add_page()
+        pdf.set_font('Arial', 'B', 16)
+        
+        for key, entry in self.entries.items():
+            pdf.cell(0, 10, f"{key.replace('_', ' ').title()}: {entry.get()}", ln=True)
+        
+        pdf.output(file_path)
+
+        messagebox.showinfo('PDF Created', f'PDF has been created successfully at {file_path}.')
+
+    def clear_window(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
+
+    def upload_from_library(self):
+        messagebox.showinfo('Library Upload', 'This feature is not implemented yet.')
+
+    def upload_from_link(self):
+        messagebox.showinfo('Link Upload', 'This feature is not implemented yet.')
+
+    def upload_from_camera(self):
+        messagebox.showinfo('Camera Upload', 'This feature is not implemented yet.')
+
+if __name__ == '__main__':
+    root = tk.Tk()
+    app = App(root)
+    root.mainloop()
